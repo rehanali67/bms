@@ -22,6 +22,16 @@ export interface PaginatedResponse<T> {
     };
 }
 
+export interface InventoryStatusSummary {
+    inStock: number;
+    lowStock: number;
+    outOfStock: number;
+}
+
+export interface InventoryPaginatedResponse extends PaginatedResponse<ProductResponse> {
+    summary: InventoryStatusSummary;
+}
+
 export interface LoginResponse {
     user: UserResponse;
     token: string;

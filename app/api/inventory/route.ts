@@ -4,7 +4,7 @@ import { getProductCollection, createProduct, productToResponse, ProductResponse
 import { createStockHistory } from '@/lib/models/StockHistory';
 import { productSchema, paginationSchema } from '@/lib/validation';
 import { handleError } from '@/lib/errors';
-import { PaginatedResponse } from '@/types/api';
+import { InventoryPaginatedResponse } from '@/types/api';
 
 async function getHandler(request: AuthenticatedRequest) {
     try {
@@ -45,7 +45,7 @@ async function getHandler(request: AuthenticatedRequest) {
         const sortField = pagination.sortBy || 'createdAt';
         const sortOrder = pagination.sortOrder === 'asc' ? 1 : -1;
 
-        const [data, total] = await Promise.all([
+        const [data, total, summaryData] = await Promise.all([
             collection
                 .find(query)
                 .sort({ [sortField]: sortOrder })
@@ -53,9 +53,49 @@ async function getHandler(request: AuthenticatedRequest) {
                 .limit(pagination.limit)
                 .toArray(),
             collection.countDocuments(query),
+            collection.aggregate<{
+                _id: null;
+                inStock: number;
+                lowStock: number;
+                outOfStock: number;
+            }>([
+                { $match: query },
+                {
+                    $group: {
+                        _id: null,
+                        inStock: {
+                            $sum: {
+                                $cond: [{ $eq: ['$status', 'In Stock'] }, 1, 0],
+                            },
+                        },
+                        lowStock: {
+                            $sum: {
+                                $cond: [{ $eq: ['$status', 'Low Stock'] }, 1, 0],
+                            },
+                        },
+                        outOfStock: {
+                            $sum: {
+                                $cond: [{ $eq: ['$status', 'Out of Stock'] }, 1, 0],
+                            },
+                        },
+                    },
+                },
+            ]).toArray(),
         ]);
 
-        const response: PaginatedResponse<ProductResponse> = {
+        const summary = summaryData[0]
+            ? {
+                inStock: summaryData[0].inStock,
+                lowStock: summaryData[0].lowStock,
+                outOfStock: summaryData[0].outOfStock,
+            }
+            : {
+                inStock: 0,
+                lowStock: 0,
+                outOfStock: 0,
+            };
+
+        const response: InventoryPaginatedResponse = {
             data: data.map(productToResponse),
             pagination: {
                 page: pagination.page,
@@ -63,6 +103,7 @@ async function getHandler(request: AuthenticatedRequest) {
                 total,
                 totalPages: Math.ceil(total / pagination.limit),
             },
+            summary,
         };
 
         return NextResponse.json({
@@ -90,9 +131,9 @@ async function postHandler(request: AuthenticatedRequest) {
         // Convert expiryDate string to Date if provided
         const productData = {
             ...validatedData,
-            expiryDate: validatedData.expiryDate 
-                ? (typeof validatedData.expiryDate === 'string' 
-                    ? new Date(validatedData.expiryDate) 
+            expiryDate: validatedData.expiryDate
+                ? (typeof validatedData.expiryDate === 'string'
+                    ? new Date(validatedData.expiryDate)
                     : validatedData.expiryDate)
                 : undefined,
         };
